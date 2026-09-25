@@ -18,6 +18,12 @@ pub const OPTION_LOCK_AFTER_SESSION_END: &str = "lock_after_session_end";
 pub const OPTION_PRIVACY_MODE: &str = "privacy_mode";
 pub const OPTION_TOUCH_MODE: &str = "touch-mode";
 pub const OPTION_SYNC_INIT_CLIPBOARD: &str = "sync-init-clipboard";
+
+// Custom build: auto-reconnect settings for the controlling side.
+// Interval in seconds between reconnect attempts, and how many times to retry
+// before showing the connection error dialog.
+pub const OPTION_RECONNECT_INTERVAL_SECS: &str = "reconnect-interval-secs";
+pub const OPTION_RECONNECT_MAX_RETRIES: &str = "reconnect-max-retries";
 pub const OPTION_THEME: &str = "theme";
 pub const OPTION_REMOTE_MENUBAR_DRAG_LEFT: &str = "remote-menubar-drag-left";
 pub const OPTION_REMOTE_MENUBAR_DRAG_RIGHT: &str = "remote-menubar-drag-right";

@@ -2049,9 +2049,39 @@ pub async fn io_loop<T: InvokeUiSession>(handler: Session<T>, round: u32) {
         }
         return;
     }
-    let mut remote = Remote::new(handler, receiver, sender);
-    remote.io_loop(&key, &token, round).await;
-    let _ = remote.sync_jobs_status_to_local().await;
+    // Custom build: auto-reconnect. When the connection is dropped unexpectedly
+    // (network hiccup, peer reboot, etc.), retry every N seconds, up to M times.
+    // The first successful attempt resumes the remote session silently; the
+    // connection error dialog is shown only after all retries fail.
+    let reconnect_interval = crate::common::get_reconnect_interval_secs();
+    let reconnect_max_retries = crate::common::get_reconnect_max_retries();
+    let mut retry_count: u32 = 0;
+    loop {
+        let (sender, receiver) = mpsc::unbounded_channel::<Data>();
+        *handler.sender.write().unwrap() = Some(sender.clone());
+        let mut remote = Remote::new(handler.clone(), receiver, sender);
+        let dropped = remote.io_loop(&key, &token, round).await;
+        let _ = remote.sync_jobs_status_to_local().await;
+        match dropped {
+            Some(err) if retry_count < reconnect_max_retries => {
+                retry_count += 1;
+                log::info!(
+                    "Connection dropped ({}), auto-reconnect attempt {}/{} in {}s",
+                    err,
+                    retry_count,
+                    reconnect_max_retries,
+                    reconnect_interval
+                );
+                tokio::time::sleep(std::time::Duration::from_secs(reconnect_interval)).await;
+            }
+            Some(err) => {
+                // All retries failed, fall back to the original error dialog.
+                handler.on_establish_connection_error(err);
+                break;
+            }
+            None => break,
+        }
+    }
 }
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
