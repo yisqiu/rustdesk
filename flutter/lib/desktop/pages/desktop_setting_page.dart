@@ -1953,6 +1953,7 @@ class _DisplayState extends State<_Display> {
       if (isDesktop) trackpadSpeed(context),
       if (!isWeb) privacyModeImpl(context),
       other(context),
+      autoReconnect(context),
     ]).marginOnly(bottom: _kListViewBottomMargin);
   }
 
@@ -2205,6 +2206,13 @@ class _DisplayState extends State<_Display> {
     final children =
         otherDefaultSettings().map((e) => otherRow(e.$1, e.$2)).toList();
     return _Card(title: 'Other Default Options', children: children);
+  }
+
+  // Custom build: auto-reconnect settings for unexpected connection drops.
+  Widget autoReconnect(BuildContext context) {
+    return _Card(title: 'Auto Reconnect', children: const [
+      _ReconnectOption(),
+    ]);
   }
 }
 
@@ -2600,6 +2608,158 @@ class _AboutState extends State<_About> {
         ]),
       );
     });
+  }
+}
+
+// Custom build: auto-reconnect settings. The user can configure how long to
+// wait between reconnect attempts (in seconds), and how many times to retry
+// before showing the connection error dialog. The first successful attempt
+// resumes the remote session silently; the connection error dialog is shown
+// only after all retries fail.
+class _ReconnectOption extends StatefulWidget {
+  const _ReconnectOption({Key? key}) : super(key: key);
+
+  @override
+  State<_ReconnectOption> createState() => _ReconnectOptionState();
+}
+
+class _ReconnectOptionState extends State<_ReconnectOption> {
+  static const int _maxValue = 300;
+  final TextEditingController _intervalController = TextEditingController();
+  final TextEditingController _retriesController = TextEditingController();
+  final FocusNode _intervalFocus = FocusNode();
+  final FocusNode _retriesFocus = FocusNode();
+  String? _intervalError;
+  String? _retriesError;
+
+  @override
+  void initState() {
+    super.initState();
+    _intervalFocus.addListener(() {
+      if (!_intervalFocus.hasFocus) {
+        _saveInterval(_intervalController.text);
+      }
+    });
+    _retriesFocus.addListener(() {
+      if (!_retriesFocus.hasFocus) {
+        _saveRetries(_retriesController.text);
+      }
+    });
+    _load();
+  }
+
+  Future<void> _load() async {
+    final interval =
+        await bind.mainGetLocalOption(key: kOptionReconnectIntervalSecs);
+    final retries =
+        await bind.mainGetLocalOption(key: kOptionReconnectMaxRetries);
+    if (!mounted) return;
+    setState(() {
+      _intervalController.text = interval.trim();
+      _retriesController.text = retries.trim();
+    });
+  }
+
+  @override
+  void dispose() {
+    _intervalController.dispose();
+    _retriesController.dispose();
+    _intervalFocus.dispose();
+    _retriesFocus.dispose();
+    super.dispose();
+  }
+
+  Future<void> _saveInterval(String value) async {
+    final text = value.trim();
+    final secs = text.isEmpty ? 5 : int.tryParse(text);
+    if (secs == null || secs < 0 || secs > _maxValue) {
+      setState(() => _intervalError = '0 - $_maxValue');
+      return;
+    }
+    if (!mounted) return;
+    setState(() {
+      _intervalError = null;
+      _intervalController.text = '$secs';
+    });
+    await bind.mainSetLocalOption(
+        key: kOptionReconnectIntervalSecs, value: '$secs');
+  }
+
+  Future<void> _saveRetries(String value) async {
+    final text = value.trim();
+    final retries = text.isEmpty ? 5 : int.tryParse(text);
+    if (retries == null || retries < 0 || retries > _maxValue) {
+      setState(() => _retriesError = '0 - $_maxValue');
+      return;
+    }
+    if (!mounted) return;
+    setState(() {
+      _retriesError = null;
+      _retriesController.text = '$retries';
+    });
+    await bind.mainSetLocalOption(
+        key: kOptionReconnectMaxRetries, value: '$retries');
+  }
+
+  Widget _buildField(TextEditingController controller, FocusNode focusNode,
+      String? errorText, Function(String) onSave) {
+    return SizedBox(
+      width: 60,
+      height: 38,
+      child: TextField(
+        controller: controller,
+        focusNode: focusNode,
+        textAlign: TextAlign.center,
+        keyboardType: TextInputType.number,
+        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+        decoration: InputDecoration(
+          isDense: true,
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+          errorText: errorText,
+        ),
+        onSubmitted: onSave,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            _buildField(_intervalController, _intervalFocus, _intervalError,
+                _saveInterval),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                translate('Reconnect interval (seconds)'),
+                style: TextStyle(fontSize: _kContentFontSize),
+              ),
+            ),
+          ],
+        ),
+        Row(
+          children: [
+            _buildField(_retriesController, _retriesFocus, _retriesError,
+                _saveRetries),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                translate('Max reconnect retries'),
+                style: TextStyle(fontSize: _kContentFontSize),
+              ),
+            ),
+          ],
+        ),
+        Text(
+          translate('Auto reconnect tip'),
+          style: const TextStyle(fontSize: 12),
+        ).marginOnly(left: 68, top: 2),
+      ],
+    ).marginOnly(left: _kCheckBoxLeftMargin, right: _kContentHMargin);
   }
 }
 

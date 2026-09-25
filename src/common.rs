@@ -1221,6 +1221,31 @@ pub fn get_local_option(key: &str) -> String {
     v
 }
 
+// Custom build: how long (in seconds) to wait between automatic reconnect
+// attempts after the connection is dropped unexpectedly.
+pub fn get_reconnect_interval_secs() -> u64 {
+    const DEFAULT_SECS: u64 = 5;
+    const MAX_SECS: u64 = 300;
+    let secs = get_local_option(keys::OPTION_RECONNECT_INTERVAL_SECS)
+        .trim()
+        .parse::<u64>()
+        .unwrap_or(DEFAULT_SECS);
+    secs.min(MAX_SECS)
+}
+
+// Custom build: how many times the client should try to re-establish the
+// connection automatically before showing the connection error dialog.
+// 0 means the original behavior (show the error dialog immediately).
+pub fn get_reconnect_max_retries() -> u32 {
+    const DEFAULT_RETRIES: u32 = 5;
+    const MAX_RETRIES: u32 = 100;
+    let retries = get_local_option(keys::OPTION_RECONNECT_MAX_RETRIES)
+        .trim()
+        .parse::<u32>()
+        .unwrap_or(DEFAULT_RETRIES);
+    retries.min(MAX_RETRIES)
+}
+
 pub fn get_audit_server(api: String, custom: String, typ: String) -> String {
     let url = get_api_server(api, custom);
     if url.is_empty() || is_public(&url) {

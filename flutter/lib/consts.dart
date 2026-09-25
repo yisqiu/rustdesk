@@ -110,6 +110,10 @@ const String kOptionEnableKeyboard = "enable-keyboard";
 // "Settings -> Security -> Permissions"
 const String kOptionEnableRemotePrinter = "enable-remote-printer";
 const String kOptionEnableClipboard = "enable-clipboard";
+
+// Custom build: auto-reconnect settings for unexpected connection drops.
+const String kOptionReconnectIntervalSecs = "reconnect-interval-secs";
+const String kOptionReconnectMaxRetries = "reconnect-max-retries";
 const String kOptionEnableFileTransfer = "enable-file-transfer";
 const String kOptionEnableAudio = "enable-audio";
 const String kOptionEnableCamera = "enable-camera";

@@ -157,7 +157,12 @@ impl<T: InvokeUiSession> Remote<T> {
         }
     }
 
-    pub async fn io_loop(&mut self, key: &str, token: &str, round: u32) {
+    // Custom build: returns `Some(error_text)` if the connection was dropped
+    // unexpectedly, so that the caller can try to re-establish the connection
+    // automatically. The error dialog is shown by the caller only after all
+    // retries fail. Returns `None` when the session ended normally.
+    pub async fn io_loop(&mut self, key: &str, token: &str, round: u32) -> Option<String> {
+        let mut dropped: Option<String> = None;
         #[cfg(target_os = "windows")]
         let _file_clip_context_holder = {
             // `is_port_forward()` will not reach here, but we still check it for clarity.
@@ -226,7 +231,7 @@ impl<T: InvokeUiSession> Remote<T> {
                         tokio::time::sleep(KCP_CLOSE_REASON_FLUSH_DELAY).await;
                     }
                     self.handle_disconnected(round);
-                    return;
+                    return None;
                 }
                 self.handler.update_direct(Some(direct));
                 if conn_type == ConnType::DEFAULT_CONN || conn_type == ConnType::VIEW_CAMERA {
@@ -276,7 +281,10 @@ impl<T: InvokeUiSession> Remote<T> {
                             if let Some(res) = res {
                                 match res {
                                     Err(err) => {
-                                        self.handler.on_establish_connection_error(err.to_string());
+                                        // Custom build: treat as a transient drop, the caller
+                                        // will auto-reconnect and only show the dialog after
+                                        // all retries fail.
+                                        dropped = Some(err.to_string());
                                         break;
                                     }
                                     Ok(ref bytes) => {
@@ -296,8 +304,9 @@ impl<T: InvokeUiSession> Remote<T> {
                                     log::info!("Restart remote device");
                                     self.handler.msgbox("restarting", "Restarting remote device", "Connection in progress. Please wait.", "");
                                 } else {
+                                    // Custom build: treat as a transient drop for auto-reconnect.
                                     log::info!("Reset by the peer");
-                                    self.handler.msgbox("error", "Connection Error", "Reset by the peer", "");
+                                    dropped = Some("Reset by the peer".to_string());
                                 }
                                 break;
                             }
@@ -315,12 +324,14 @@ impl<T: InvokeUiSession> Remote<T> {
                         }
                         _ = self.timer.tick() => {
                             if last_recv_time.elapsed() >= SEC30 {
-                                self.handler.msgbox("error", "Connection Error", "Timeout", "");
+                                // Custom build: treat as a transient drop for auto-reconnect.
+                                dropped = Some("Timeout".to_string());
                                 break;
                             }
                             if !self.read_jobs.is_empty() {
                                 if let Err(err) = fs::handle_read_jobs(&mut self.read_jobs, &mut peer).await {
-                                    self.handler.msgbox("error", "Connection Error", &err.to_string(), "");
+                                    // Custom build: treat as a transient drop for auto-reconnect.
+                                    dropped = Some(err.to_string());
                                     break;
                                 }
                                 self.update_jobs_status();
@@ -424,10 +435,12 @@ impl<T: InvokeUiSession> Remote<T> {
                 }
             }
             Err(err) => {
-                self.handler.on_establish_connection_error(err.to_string());
+                // Custom build: treat as a transient failure for auto-reconnect.
+                dropped = Some(err.to_string());
             }
         }
         self.handle_disconnected(round);
+        dropped
     }
 
     fn handle_disconnected(&self, round: u32) {
