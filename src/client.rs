@@ -355,6 +355,45 @@ fn tcp_punch_allowed() -> bool {
             || crate::get_webrtc_enabled())
 }
 
+/// Resolve a LAN machine name (hostname) to an IP so it can be connected like a
+/// direct IP address. Only bare names (optionally with a ":port" suffix) that are
+/// not already IPs and are not numeric RustDesk IDs are attempted. Resolution goes
+/// through the OS resolver (DNS, hosts file, and on Windows LLMNR/NetBIOS for LAN
+/// names). Returns the resolved "ip[:port]" string, or None so the caller falls
+/// back to the normal ID/domain handling.
+async fn resolve_peer_hostname(peer: &str) -> Option<String> {
+    if peer.is_empty() || hbb_common::is_ip_str(peer) {
+        return None;
+    }
+    // Split an optional ":port" suffix off the host part.
+    let (host, port_suffix) = match peer.rsplit_once(':') {
+        Some((h, p)) if !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()) => {
+            (h, format!(":{p}"))
+        }
+        _ => (peer, String::new()),
+    };
+    // A hostname always contains at least one letter; numeric strings are
+    // RustDesk IDs, so skip them to avoid pointless DNS lookups.
+    if !host.bytes().any(|b| b.is_ascii_alphabetic()) {
+        return None;
+    }
+    let addrs = tokio::net::lookup_host((host, 0u16)).await.ok()?;
+    // Prefer IPv4 for LAN direct connections; keep the first IPv6 as a fallback.
+    let mut first_v6: Option<std::net::IpAddr> = None;
+    let mut chosen: Option<std::net::IpAddr> = None;
+    for addr in addrs {
+        let ip = addr.ip();
+        if ip.is_ipv4() {
+            chosen = Some(ip);
+            break;
+        } else if first_v6.is_none() {
+            first_v6 = Some(ip);
+        }
+    }
+    let ip = chosen.or(first_v6)?;
+    Some(format!("{ip}{port_suffix}"))
+}
+
 impl Client {
     const CLIENT_CLIPBOARD_NAME: &'static str = "client-clipboard";
 
@@ -425,6 +464,17 @@ impl Client {
             bail!("Incoming only mode");
         }
         // to-do: remember the port for each peer, so that we can retry easier
+        // Support LAN machine names: resolve a hostname to an IP so it can be
+        // connected like a direct IP. On failure, keep `peer` as-is so it falls
+        // through to the normal ID/domain handling below.
+        let resolved_peer;
+        let peer = match resolve_peer_hostname(peer).await {
+            Some(ip) => {
+                resolved_peer = ip;
+                resolved_peer.as_str()
+            }
+            None => peer,
+        };
         if hbb_common::is_ip_str(peer) {
             return Ok((
                 (
