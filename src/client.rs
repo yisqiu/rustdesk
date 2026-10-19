@@ -470,6 +470,11 @@ impl Client {
         let resolved_peer;
         let peer = match resolve_peer_hostname(peer).await {
             Some(ip) => {
+                // The remote whitelist (`is_direct_ip_access`) only accepts IP
+                // strings for direct access, so the login identity must carry
+                // the resolved IP, not the original hostname, or the peer
+                // rejects the login with "Offline".
+                interface.get_lch().write().unwrap().id = ip.clone();
                 resolved_peer = ip;
                 resolved_peer.as_str()
             }
