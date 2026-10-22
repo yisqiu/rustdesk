@@ -473,8 +473,15 @@ impl Client {
                 // The remote whitelist (`is_direct_ip_access`) only accepts IP
                 // strings for direct access, so the login identity must carry
                 // the resolved IP, not the original hostname, or the peer
-                // rejects the login with "Offline".
-                interface.get_lch().write().unwrap().id = ip.clone();
+                // rejects the login with "Offline". The original input is kept
+                // for persisted configs / recent peers, so reconnecting from
+                // history re-resolves the hostname instead of pinning the IP.
+                {
+                    let lch = interface.get_lch();
+                    let mut lc = lch.write().unwrap();
+                    lc.original_id = Some(peer.to_owned());
+                    lc.id = ip.clone();
+                }
                 resolved_peer = ip;
                 resolved_peer.as_str()
             }
@@ -2906,6 +2913,9 @@ struct ConnToken {
 #[derive(Default)]
 pub struct LoginConfigHandler {
     id: String,
+    /// What the user actually typed (e.g. a LAN hostname) before it was
+    /// resolved to an IP for login; persisted configs/recent peers key on it.
+    original_id: Option<String>,
     pub conn_type: ConnType,
     pub is_terminal_admin: bool,
     hash: Hash,
@@ -2970,6 +2980,12 @@ impl Deref for LoginConfigHandler {
 }
 
 impl LoginConfigHandler {
+    /// The id to key persisted data (PeerConfig / recent peers) on: what the
+    /// user typed, when it was resolved to an IP for the actual login.
+    fn storage_id(&self) -> &str {
+        self.original_id.as_deref().unwrap_or(&self.id)
+    }
+
     pub(crate) fn set_hash(&mut self, hash: Hash) {
         self.hash = hash;
     }
@@ -3120,7 +3136,7 @@ impl LoginConfigHandler {
     /// Load [`PeerConfig`].
     pub fn load_config(&self) -> PeerConfig {
         debug_assert!(self.id.len() > 0);
-        PeerConfig::load(&self.id)
+        PeerConfig::load(self.storage_id())
     }
 
     /// Save a [`PeerConfig`] into the handler.
@@ -3129,7 +3145,7 @@ impl LoginConfigHandler {
     ///
     /// * `config` - [`PeerConfig`] to save.
     pub fn save_config(&mut self, config: PeerConfig) {
-        config.store(&self.id);
+        config.store(self.storage_id());
         self.config = config;
     }
 
@@ -3400,7 +3416,7 @@ impl LoginConfigHandler {
             } else {
                 self.config.options.insert(name, "Y".to_owned());
             }
-            self.config.store(&self.id);
+            self.config.store(self.storage_id());
             return None;
         }
 
