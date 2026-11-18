@@ -28,7 +28,10 @@ use std::{
     },
     path::*,
     ptr::null_mut,
-    sync::{atomic::Ordering, Arc, Mutex},
+    sync::{
+        atomic::{AtomicPtr, Ordering},
+        Arc, Mutex,
+    },
     time::{Duration, Instant},
 };
 use wallpaper;
@@ -136,6 +139,66 @@ fn validate_install_app_name(app_name: &str) -> ResultType<()> {
         bail!("Application name must match [a-zA-Z0-9-]+");
     }
     Ok(())
+}
+
+// Custom build: suppress the local IME while the remote session view is active,
+// so keystrokes are delivered to the remote side as raw key codes (like ENG mode)
+// instead of being captured by a local Chinese IME candidate window.
+// The original input-method context is saved and restored on leave.
+//
+// ImmAssociateContext is not exposed by the `winapi` crate's `imm` module here,
+// so load it dynamically from imm32.dll. HIMC/HWND are opaque pointers, using
+// c_void keeps us independent of winapi feature flags.
+type ImmAssociateContextFn = unsafe extern "system" fn(HWND, *mut c_void) -> *mut c_void;
+static SAVED_HIMC: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
+static SAVED_HWND: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
+static IME_DISABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+unsafe fn get_imm_associate_context() -> Option<ImmAssociateContextFn> {
+    let imm32 = LoadLibraryA(b"imm32.dll\0".as_ptr() as *const i8);
+    if imm32.is_null() {
+        return None;
+    }
+    let addr = GetProcAddress(imm32, b"ImmAssociateContext\0".as_ptr() as *const i8);
+    if addr.is_null() {
+        return None;
+    }
+    Some(std::mem::transmute::<_, ImmAssociateContextFn>(addr))
+}
+
+/// Disable the local IME for the current foreground (remote session) window.
+pub fn disable_local_ime() {
+    if IME_DISABLED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    unsafe {
+        if let Some(imm_associate) = get_imm_associate_context() {
+            let hwnd = GetForegroundWindow();
+            if !hwnd.is_null() {
+                // Passing NULL disassociates the window from any IME; the previous
+                // HIMC is returned so we can restore it later.
+                let prev = imm_associate(hwnd, std::ptr::null_mut());
+                SAVED_HIMC.store(prev, Ordering::SeqCst);
+                SAVED_HWND.store(hwnd as *mut c_void, Ordering::SeqCst);
+            }
+        }
+    }
+}
+
+/// Restore the local IME that was disabled by `disable_local_ime`.
+pub fn restore_local_ime() {
+    if !IME_DISABLED.swap(false, Ordering::SeqCst) {
+        return;
+    }
+    unsafe {
+        let prev = SAVED_HIMC.swap(std::ptr::null_mut(), Ordering::SeqCst);
+        let hwnd = SAVED_HWND.swap(std::ptr::null_mut(), Ordering::SeqCst) as HWND;
+        if !prev.is_null() && !hwnd.is_null() {
+            if let Some(imm_associate) = get_imm_associate_context() {
+                imm_associate(hwnd, prev);
+            }
+        }
+    }
 }
 
 pub fn get_focused_display(displays: Vec<DisplayInfo>) -> Option<usize> {
