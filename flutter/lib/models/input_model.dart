@@ -1155,9 +1155,7 @@ class InputModel {
     }
     _relativeMouse.onEnterOrLeaveImage(enter);
     _flingTimer?.cancel();
-    // Custom build: always notify Rust on enter/leave so the local IME can be
-    // suppressed while the remote view is active (all input sources).
-    if (!isWeb) {
+    if (!isInputSourceFlutter) {
       bind.sessionEnterOrLeave(sessionId: sessionId, enter: enter);
     }
     if (!isWeb && enter) {

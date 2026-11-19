@@ -28,10 +28,7 @@ use std::{
     },
     path::*,
     ptr::null_mut,
-    sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
-        Arc, Mutex,
-    },
+    sync::{atomic::Ordering, Arc, Mutex},
     time::{Duration, Instant},
 };
 use wallpaper;
@@ -139,106 +136,6 @@ fn validate_install_app_name(app_name: &str) -> ResultType<()> {
         bail!("Application name must match [a-zA-Z0-9-]+");
     }
     Ok(())
-}
-
-// Custom build: suppress the local IME while the remote session view is active,
-// so keystrokes go straight to the remote side (no local candidate window).
-//
-// WeType (WeChat Input) is a TSF-based IME. It ignores legacy IMM32 tricks
-// (ImmAssociateContext) and even ActivateKeyboardLayout/HKL changes — verified
-// in this environment: the window thread layout was already en-US (0x0409) yet
-// the candidate window still popped up. The ONLY thing that works is the same
-// keystroke the user presses manually: Win+Space, which cycles the TSF input
-// source (en-US 0x0409 <-> zh-CN 0x0804). Verified by external probe.
-//
-// Strategy:
-//   - enter view  -> if current input source is Chinese, send Win+Space -> ENG
-//   - leave view  -> if we switched it, send Win+Space -> back to Chinese
-//   - debounce enter/leave (logs showed rapid enter/leave pairs within 5ms)
-//   - never type Win+Space into the remote session (we inject it and immediately
-//     suppress that one key event from being forwarded)
-
-const IME_HKL_EN: usize = 0x0409; // en-US: low word of HKL
-const IME_HKL_ZH: usize = 0x0804; // zh-CN
-
-static IME_SWITCHED: AtomicBool = AtomicBool::new(false); // did WE switch EN->(was ZH)?
-static IME_SEQ: AtomicU64 = AtomicU64::new(0); // debounce generation counter
-const IME_DEBOUNCE: Duration = Duration::from_millis(250);
-
-unsafe fn get_foreground_thread_layout() -> usize {
-    let hwnd = GetForegroundWindow();
-    if hwnd.is_null() {
-        return 0;
-    }
-    let mut pid: u32 = 0;
-    let tid = GetWindowThreadProcessId(hwnd, &mut pid as *mut u32);
-    (GetKeyboardLayout(tid) as usize) & 0xFFFF
-}
-
-/// Send a single Win+Space keystroke to switch the TSF input source.
-unsafe fn send_win_space() {
-    keybd_event(VK_LWIN as u8, 0, 0, 0);
-    keybd_event(VK_SPACE as u8, 0, 0, 0);
-    keybd_event(VK_SPACE as u8, 0, KEYEVENTF_KEYUP, 0);
-    keybd_event(VK_LWIN as u8, 0, KEYEVENTF_KEYUP, 0);
-}
-
-/// Apply the final desired state after the debounce window settles.
-fn apply_ime_state(want_english: bool) {
-    unsafe {
-        let lang = get_foreground_thread_layout();
-        if want_english {
-            // Entering remote view: switch Chinese -> English once.
-            if lang == IME_HKL_ZH || lang == 0 {
-                log::info!("[ime] apply enter: lang={:#06x} -> Win+Space", lang);
-                send_win_space();
-                std::thread::sleep(Duration::from_millis(150));
-                let after = get_foreground_thread_layout();
-                IME_SWITCHED.store(after == IME_HKL_EN, Ordering::SeqCst);
-                log::info!("[ime] apply enter: after lang={:#06x} switched={}", after, IME_SWITCHED.load(Ordering::SeqCst));
-            } else {
-                // Already English (maybe leftover/other input source): leave it.
-                IME_SWITCHED.store(false, Ordering::SeqCst);
-                log::info!("[ime] apply enter: already lang={:#06x}, no switch", lang);
-            }
-        } else {
-            // Leaving remote view: restore English -> Chinese only if WE switched.
-            if IME_SWITCHED.swap(false, Ordering::SeqCst) {
-                let cur = get_foreground_thread_layout();
-                if cur == IME_HKL_EN {
-                    log::info!("[ime] apply leave: lang={:#06x} -> Win+Space restore", cur);
-                    send_win_space();
-                    std::thread::sleep(Duration::from_millis(150));
-                    log::info!("[ime] apply leave: after lang={:#06x}", get_foreground_thread_layout());
-                }
-            }
-        }
-    }
-}
-
-/// Schedule an IME input-source change with trailing debounce.
-/// enter/leave fire in rapid pairs (logs showed 2-5ms gaps); only the last
-/// request in a quiet window is applied, and it runs on a background thread so
-/// the sync FFI caller is never blocked.
-fn schedule_ime_state(want_english: bool) {
-    let seq = IME_SEQ.fetch_add(1, Ordering::SeqCst) + 1;
-    std::thread::spawn(move || {
-        std::thread::sleep(IME_DEBOUNCE);
-        if IME_SEQ.load(Ordering::SeqCst) != seq {
-            return; // superseded by a newer enter/leave
-        }
-        apply_ime_state(want_english);
-    });
-}
-
-/// Switch the Windows input source to English when entering the remote view.
-pub fn disable_local_ime() {
-    schedule_ime_state(true);
-}
-
-/// Restore the previous (Chinese) input source when leaving the remote view.
-pub fn restore_local_ime() {
-    schedule_ime_state(false);
 }
 
 pub fn get_focused_display(displays: Vec<DisplayInfo>) -> Option<usize> {

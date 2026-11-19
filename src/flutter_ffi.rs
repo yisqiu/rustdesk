@@ -651,17 +651,6 @@ pub fn session_handle_flutter_raw_key_event(
 // As Rust is multi-threaded, enter() can be called before leave().
 // The Rust-side grab ownership state filters stale transitions.
 pub fn session_enter_or_leave(_session_id: SessionID, _enter: bool) -> SyncReturn<()> {
-    // Custom build: suppress the local IME while the remote view is active so
-    // keystrokes go straight to the remote side (no local candidate window).
-    #[cfg(windows)]
-    {
-        log::info!("[ime] session_enter_or_leave enter={}", _enter);
-        if _enter {
-            crate::platform::windows::disable_local_ime();
-        } else {
-            crate::platform::windows::restore_local_ime();
-        }
-    }
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     if let Some(session) = sessions::get_session_by_session_id(&_session_id) {
         let keyboard_mode = session.get_keyboard_mode();
