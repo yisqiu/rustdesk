@@ -655,6 +655,7 @@ pub fn session_enter_or_leave(_session_id: SessionID, _enter: bool) -> SyncRetur
     // keystrokes go straight to the remote side (no local candidate window).
     #[cfg(windows)]
     {
+        log::info!("[ime] session_enter_or_leave enter={}", _enter);
         if _enter {
             crate::platform::windows::disable_local_ime();
         } else {
