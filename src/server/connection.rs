@@ -2340,6 +2340,13 @@ impl Connection {
     }
 
     fn try_start_cm(&mut self, peer_id: String, name: String, authorized: bool) {
+        // Custom build: never start the CM (connection manager) window on the
+        // controlled machine. Authorization uses the permanent password path,
+        // so the click-approval UI is not needed. Skipping this prevents the
+        // --cm process from ever being spawned (and the window from appearing).
+        if hbb_common::password_security::hide_cm() {
+            return;
+        }
         self.send_to_cm(ipc::Data::Login {
             id: self.inner.id(),
             is_file_transfer: self.file_transfer.is_some(),
@@ -2815,6 +2822,12 @@ impl Connection {
 
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     fn try_start_cm_ipc(&mut self) {
+        // Custom build: do not spin up the IPC bridge that launches the --cm
+        // process. Leave the channel untouched (holder keeps rx_from_cm idle)
+        // so no CmErr is emitted and password-based sessions stay alive.
+        if hbb_common::password_security::hide_cm() {
+            return;
+        }
         if let Some(p) = self.start_cm_ipc_para.take() {
             tokio::spawn(async move {
                 #[cfg(windows)]
