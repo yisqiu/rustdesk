@@ -5248,7 +5248,11 @@ pub fn check_if_retry(msgtype: &str, title: &str, text: &str, retry_for_relay: b
                     || text
                         .to_lowercase()
                         .contains("connection reset without closing handshake") && use_ws())
-                && !text.to_lowercase().contains("failed")
+                // Connection-establishment failures from Client::start carry
+                // ": Please try later". They are retryable on demand (the
+                // Flutter dialog shows Reconnect), unlike permanent failures.
+                && (!text.to_lowercase().contains("failed")
+                    || text.to_lowercase().contains("please try later"))
                 && !text.to_lowercase().contains("resolve")
                 && !text.to_lowercase().contains("mismatch")
                 && !text.to_lowercase().contains("manually")
@@ -5267,6 +5271,26 @@ mod retry_tests {
             "error",
             "Connection Error",
             "Incoming only mode",
+            false,
+        ));
+    }
+
+    #[test]
+    fn connect_failure_with_please_try_later_is_retryable() {
+        assert!(check_if_retry(
+            "error",
+            "Connection Error",
+            "Failed to connect to 192.168.1.100:21118: Please try later",
+            false,
+        ));
+    }
+
+    #[test]
+    fn other_failed_errors_are_still_not_retryable() {
+        assert!(!check_if_retry(
+            "error",
+            "Connection Error",
+            "Failed to authenticate",
             false,
         ));
     }
