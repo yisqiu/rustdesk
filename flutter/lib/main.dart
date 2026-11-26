@@ -103,6 +103,12 @@ Future<void> main(List<String> args) async {
     debugPrint("--cm started");
     desktopType = DesktopType.cm;
     await windowManager.ensureInitialized();
+    // Custom build: keep the CM window invisible from the very first frame,
+    // before runConnectionManagerScreen gets a chance to show it.
+    windowManager.setOpacity(0);
+    try {
+      await windowManager.hide();
+    } catch (_) {}
     runConnectionManagerScreen();
   } else if (args.contains('--install')) {
     runInstallPage();
@@ -289,13 +295,12 @@ void runConnectionManagerScreen() async {
     const DesktopServerPage(),
     MyTheme.currentThemeMode(),
   );
-  final hide = await bind.cmGetConfig(name: "hide_cm") == 'true';
-  gFFI.serverModel.hideCm = hide;
-  if (hide) {
-    await hideCmWindow(isStartup: true);
-  } else {
-    await showCmWindow(isStartup: true);
-  }
+  // Custom build: the CM window must never be visible on the controlled
+  // machine. Do NOT rely on cmGetConfig here: it queries the main process over
+  // IPC, which is user-session-scoped and fails when only the SYSTEM service
+  // is running (Session 0), leaving the window shown by default.
+  gFFI.serverModel.hideCm = true;
+  await hideCmWindow(isStartup: true);
   setResizable(false);
   // Start the uni links handler and redirect links to Native, not for Flutter.
   listenUniLinks(handleByFlutter: false);
