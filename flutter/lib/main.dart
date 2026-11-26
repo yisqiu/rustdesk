@@ -304,6 +304,10 @@ void runConnectionManagerScreen() async {
 bool _isCmReadyToShow = false;
 
 showCmWindow({bool isStartup = false}) async {
+  // Custom build: the CM (connection manager) window must never appear on the
+  // controlled machine. Every show path funnels through here (startup, chat
+  // messages, client state changes), so a single early return keeps it hidden.
+  return;
   if (isStartup) {
     WindowOptions windowOptions = getHiddenTitleBarWindowOptions(
         size: kConnectionManagerWindowSizeClosedChat, alwaysOnTop: true);

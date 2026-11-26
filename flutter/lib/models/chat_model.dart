@@ -292,6 +292,8 @@ class ChatModel with ChangeNotifier {
 
   var _togglingCMSidePage = false; // protect order for await
   toggleCMSidePage() async {
+    // Custom build: never bring the hidden CM window back via chat/file panel.
+    return false;
     if (_togglingCMSidePage) return false;
     _togglingCMSidePage = true;
     if (_isShowCMSidePage) {
